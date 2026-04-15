@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Target, Map, PlayCircle, BookOpen, CheckCircle, ChevronRight, AlertCircle, RefreshCw } from 'lucide-react';
+import { Clock, Target, Map, PlayCircle, BookOpen, CheckCircle, ChevronRight, AlertCircle, RefreshCw, History, X } from 'lucide-react';
 
 // --- MOCK DATA (Schweser-Mapped JSON) ---
 const fsaRoadmapData = [
@@ -97,7 +97,7 @@ export default function App() {
   const QUIZ_HISTORY_KEY = 'revise_quiz_history'; // Store previous attempts
   const QUIZ_STATS_KEY = 'revise_quiz_stats'; // Store stats per day
 
-  const [currentScreen, setCurrentScreen] = useState('setup'); // setup, target, roadmap, quiz, review, past-review
+  const [currentScreen, setCurrentScreen] = useState('setup'); // setup, target, roadmap, quiz, review, past-review, history
   const [targetScore, setTargetScore] = useState(60);
   const [currentDayStr, setCurrentDayStr] = useState(1);
   const [activeDayData, setActiveDayData] = useState(null);
@@ -295,6 +295,14 @@ export default function App() {
     setCurrentScreen('past-review');
   };
 
+  const openHistory = () => {
+    setCurrentScreen('history');
+  };
+
+  const closeHistory = () => {
+    setCurrentScreen('roadmap');
+  };
+
   // --- RENDER SCREENS ---
 
   // SCREEN 1: SETUP
@@ -386,10 +394,20 @@ export default function App() {
               </h1>
               <p className="text-xs text-slate-400 mt-1">SchweserNotes Aligned • Target {targetScore}%</p>
             </div>
-            <div className="text-right">
-              <div className="text-2xl font-bold text-blue-400">Day {currentDayStr}/30</div>
-              <div className="w-32 h-2 bg-slate-700 rounded-full mt-2 overflow-hidden">
-                <div className="h-full bg-blue-500" style={{ width: `${(currentDayStr / 30) * 100}%` }}></div>
+            <div className="text-right flex items-center gap-4">
+              <button
+                onClick={openHistory}
+                className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors text-sm font-semibold"
+                title="View all quiz history"
+              >
+                <History className="w-4 h-4" />
+                History
+              </button>
+              <div>
+                <div className="text-2xl font-bold text-blue-400">Day {currentDayStr}/30</div>
+                <div className="w-32 h-2 bg-slate-700 rounded-full mt-2 overflow-hidden">
+                  <div className="h-full bg-blue-500" style={{ width: `${(currentDayStr / 30) * 100}%` }}></div>
+                </div>
               </div>
             </div>
           </div>
@@ -689,6 +707,13 @@ export default function App() {
             <RefreshCw className="w-5 h-5 mr-2" />
             Làm Lại
           </button>
+          <button
+            onClick={openHistory}
+            className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-4 px-8 rounded-xl shadow-lg flex items-center transition-transform hover:scale-105"
+          >
+            <History className="w-5 h-5 mr-2" />
+            History
+          </button>
         </div>
       </div>
     );
@@ -783,7 +808,7 @@ export default function App() {
         </div>
 
         {/* Footer Actions */}
-        <div className="max-w-4xl mx-auto mt-8 px-4 pb-12 flex justify-center">
+        <div className="max-w-4xl mx-auto mt-8 px-4 pb-12 flex justify-center gap-4">
           <button
             onClick={backToRoadmap}
             className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 px-8 rounded-xl shadow-lg flex items-center transition-transform hover:scale-105"
@@ -791,6 +816,136 @@ export default function App() {
             <Map className="w-5 h-5 mr-2" />
             Trở về Roadmap
           </button>
+          <button
+            onClick={openHistory}
+            className="bg-slate-700 hover:bg-slate-600 text-white font-bold py-4 px-8 rounded-xl shadow-lg flex items-center transition-transform hover:scale-105"
+          >
+            <History className="w-5 h-5 mr-2" />
+            History
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // SCREEN 7: HISTORY - View all quiz attempts
+  if (currentScreen === 'history') {
+    const allAttempts = loadQuizHistory();
+    
+    // Group attempts by day
+    const attemptsByDay = {};
+    allAttempts.forEach(attempt => {
+      if (!attemptsByDay[attempt.dayNumber]) {
+        attemptsByDay[attempt.dayNumber] = [];
+      }
+      attemptsByDay[attempt.dayNumber].push(attempt);
+    });
+
+    // Sort by day number desc (most recent first)
+    const sortedDays = Object.keys(attemptsByDay)
+      .map(Number)
+      .sort((a, b) => b - a);
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans pb-12">
+        {/* Header */}
+        <div className="bg-slate-900 text-white p-8 shadow-md">
+          <div className="max-w-4xl mx-auto flex items-center justify-between">
+            <div>
+              <h1 className="text-3xl font-bold flex items-center mb-2">
+                <History className="w-8 h-8 mr-3 text-blue-400" />
+                Quiz History
+              </h1>
+              <p className="text-slate-300">Total Attempts: {allAttempts.length}</p>
+            </div>
+            <button
+              onClick={closeHistory}
+              className="p-2 bg-slate-800 hover:bg-slate-700 rounded-lg transition-colors"
+              title="Close history"
+            >
+              <X className="w-6 h-6" />
+            </button>
+          </div>
+        </div>
+
+        {/* History List */}
+        <div className="max-w-4xl mx-auto mt-8 px-4">
+          {sortedDays.length === 0 ? (
+            <div className="text-center py-12">
+              <History className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+              <p className="text-slate-500 text-lg">Không có lịch sử quiz nào</p>
+            </div>
+          ) : (
+            <div className="space-y-8">
+              {sortedDays.map((dayNum) => {
+                const attempts = attemptsByDay[dayNum];
+                const bestScore = Math.max(...attempts.map(a => a.scorePct));
+                const avgScore = Math.round(attempts.reduce((sum, a) => sum + a.scorePct, 0) / attempts.length);
+
+                return (
+                  <div key={dayNum} className="bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
+                    {/* Day Header */}
+                    <div className="bg-gradient-to-r from-slate-800 to-slate-900 p-6 text-white">
+                      <h2 className="text-xl font-bold mb-1">Day {dayNum}</h2>
+                      <p className="text-slate-300 text-sm mb-4">{attempts[0].dayName}</p>
+                      
+                      <div className="grid grid-cols-3 gap-4">
+                        <div>
+                          <p className="text-xs text-slate-400 uppercase">Attempts</p>
+                          <p className="text-2xl font-bold text-blue-400">{attempts.length}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 uppercase">Best Score</p>
+                          <p className={`text-2xl font-bold ${bestScore >= 70 ? 'text-green-400' : bestScore >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
+                            {bestScore}%
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-400 uppercase">Avg Score</p>
+                          <p className="text-2xl font-bold text-blue-300">{avgScore}%</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Attempts List */}
+                    <div className="divide-y divide-slate-200">
+                      {attempts.map((attempt, idx) => (
+                        <div 
+                          key={attempt.id}
+                          className="p-4 hover:bg-slate-50 transition-colors cursor-pointer"
+                          onClick={() => viewPastAttempt(attempt)}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-3 mb-2">
+                                <span className="text-sm font-semibold text-slate-600">
+                                  Attempt #{attempts.length - idx}
+                                </span>
+                                <span className={`px-2 py-1 rounded text-xs font-bold ${
+                                  attempt.scorePct >= 70 ? 'bg-green-100 text-green-700' :
+                                  attempt.scorePct >= 50 ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>
+                                  {attempt.scorePct}%
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500">
+                                {attempt.correctCount}/{attempt.totalQuestions} Correct • {new Date(attempt.timestamp).toLocaleString('vi-VN')}
+                              </p>
+                            </div>
+                            <div className="text-right ml-4">
+                              <p className="text-2xl font-bold text-slate-700">{attempt.correctCount}/{attempt.totalQuestions}</p>
+                              <ChevronRight className="w-5 h-5 text-slate-400 mt-1 ml-auto" />
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     );
