@@ -93,7 +93,11 @@ for (let i = 3; i <= 30; i++) {
 }
 
 export default function App() {
-  const [currentScreen, setCurrentScreen] = useState('setup'); // setup, target, roadmap, quiz, review
+  const SESSION_STORAGE_KEY = 'revise_web_session';
+  const QUIZ_HISTORY_KEY = 'revise_quiz_history'; // Store previous attempts
+  const QUIZ_STATS_KEY = 'revise_quiz_stats'; // Store stats per day
+
+  const [currentScreen, setCurrentScreen] = useState('setup'); // setup, target, roadmap, quiz, review, past-review
   const [targetScore, setTargetScore] = useState(60);
   const [currentDayStr, setCurrentDayStr] = useState(1);
   const [activeDayData, setActiveDayData] = useState(null);
@@ -104,6 +108,92 @@ export default function App() {
   const [userAnswers, setUserAnswers] = useState({});
   const [timeLeft, setTimeLeft] = useState(0);
   const [quizActive, setQuizActive] = useState(false);
+  const [quizHistory, setQuizHistory] = useState([]); // Store all attempts
+  const [selectedAttempt, setSelectedAttempt] = useState(null); // For reviewing past attempts
+
+  const loadSavedSession = () => {
+    if (typeof window === 'undefined') return null;
+    const saved = window.localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!saved) return null;
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return null;
+    }
+  };
+
+  // Load quiz history from localStorage
+  const loadQuizHistory = () => {
+    if (typeof window === 'undefined') return [];
+    const saved = window.localStorage.getItem(QUIZ_HISTORY_KEY);
+    if (!saved) return [];
+    try {
+      return JSON.parse(saved);
+    } catch {
+      return [];
+    }
+  };
+
+  // Save quiz attempt to history
+  const saveQuizAttempt = (dayData, questions, answers, score) => {
+    const attempt = {
+      id: Date.now(),
+      dayNumber: dayData.day,
+      dayName: dayData.schweser_reading_name,
+      questions: questions,
+      userAnswers: answers,
+      correctCount: score.correctCount,
+      totalQuestions: score.totalQuestions,
+      scorePct: score.scorePct,
+      timestamp: new Date().toISOString(),
+      timeSpent: (questions.length * 90) - timeLeft // Approximate time spent
+    };
+
+    const history = loadQuizHistory();
+    history.push(attempt);
+    window.localStorage.setItem(QUIZ_HISTORY_KEY, JSON.stringify(history));
+    setQuizHistory(history);
+    return attempt;
+  };
+
+  // Get stats for a specific day
+  const getDayStats = (dayNumber) => {
+    const attempts = loadQuizHistory().filter(a => a.dayNumber === dayNumber);
+    if (attempts.length === 0) return null;
+    
+    const bestScore = Math.max(...attempts.map(a => a.scorePct));
+    const avgScore = Math.round(attempts.reduce((sum, a) => sum + a.scorePct, 0) / attempts.length);
+    
+    return {
+      attempts: attempts.length,
+      bestScore,
+      avgScore,
+      allAttempts: attempts,
+      lastAttempt: attempts[attempts.length - 1]
+    };
+  };
+
+  useEffect(() => {
+    const saved = loadSavedSession();
+    if (saved) {
+      setTargetScore(saved.targetScore ?? 60);
+      setCurrentDayStr(saved.currentDayStr ?? 1);
+      if (saved.currentDayStr > 1) {
+        setCurrentScreen('roadmap');
+      }
+    }
+    // Load quiz history
+    const history = loadQuizHistory();
+    setQuizHistory(history);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+      targetScore,
+      currentDayStr,
+    }));
+  }, [targetScore, currentDayStr]);
 
   // Helper: Format Time
   const formatTime = (seconds) => {
@@ -164,15 +254,46 @@ export default function App() {
 
   const handleQuizSubmit = () => {
     setQuizActive(false);
+
+    // Calculate score
+    let correctCount = 0;
+    quizQuestions.forEach((q, idx) => {
+      if (userAnswers[idx] === q.correct_answer) correctCount++;
+    });
+    const scorePct = Math.round((correctCount / quizQuestions.length) * 100);
+
+    // Save attempt to history
+    const score = {
+      correctCount,
+      totalQuestions: quizQuestions.length,
+      scorePct
+    };
+    saveQuizAttempt(activeDayData, quizQuestions, userAnswers, score);
+
     setCurrentScreen('review');
-    // Unlock next day logic
+
+    // Unlock next day
     if (activeDayData.day === currentDayStr) {
       setCurrentDayStr(currentDayStr + 1);
-      fsaRoadmapData[activeDayData.day].isLocked = false; // unlock next day in array
+      fsaRoadmapData[activeDayData.day].isLocked = false;
     }
   };
 
   const backToRoadmap = () => setCurrentScreen('roadmap');
+
+  const handleRetake = () => {
+    // Reset for retake
+    setCurrentQIndex(0);
+    setUserAnswers({});
+    setTimeLeft(quizQuestions.length * 90);
+    setCurrentScreen('quiz');
+    setQuizActive(true);
+  };
+
+  const viewPastAttempt = (attempt) => {
+    setSelectedAttempt(attempt);
+    setCurrentScreen('past-review');
+  };
 
   // --- RENDER SCREENS ---
 
@@ -281,6 +402,7 @@ export default function App() {
               const isActive = dayData.day === currentDayStr;
               const isPast = dayData.day < currentDayStr;
               const isLocked = dayData.day > currentDayStr;
+              const stats = getDayStats(dayData.day);
 
               return (
                 <div
@@ -305,20 +427,52 @@ export default function App() {
                       <BookOpen className="w-4 h-4 mr-1" />
                       {dayData.schweser_module}
                     </p>
+
+                    {/* Stats if completed */}
+                    {stats && (
+                      <div className="mt-3 flex items-center gap-6 text-xs">
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-500">Attempts:</span>
+                          <span className="font-bold text-slate-700">{stats.attempts}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-500">Best:</span>
+                          <span className={`font-bold ${stats.bestScore >= 70 ? 'text-green-600' : stats.bestScore >= 50 ? 'text-yellow-600' : 'text-red-600'}`}>
+                            {stats.bestScore}%
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-slate-500">Avg:</span>
+                          <span className="font-bold text-blue-600">{stats.avgScore}%</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  <div className="mt-4 md:mt-0 md:ml-6 w-full md:w-auto">
+                  <div className="mt-4 md:mt-0 md:ml-6 w-full md:w-auto flex gap-2">
                     {!isLocked ? (
-                      <button
-                        onClick={() => startDayQuiz(dayData)}
-                        className={`w-full md:w-auto px-6 py-3 rounded-lg font-semibold flex items-center justify-center ${isActive
-                            ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md'
-                            : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'
-                          }`}
-                      >
-                        {isPast ? 'Review/Retake' : 'Start Session'}
-                        {!isPast && <PlayCircle className="w-5 h-5 ml-2" />}
-                      </button>
+                      <>
+                        <button
+                          onClick={() => startDayQuiz(dayData)}
+                          className={`px-6 py-3 rounded-lg font-semibold flex items-center justify-center transition-all ${isActive
+                              ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-md'
+                              : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-50'
+                            }`}
+                        >
+                          {isPast ? 'Retake' : 'Start'}
+                          {!isPast && <PlayCircle className="w-5 h-5 ml-2" />}
+                          {isPast && <RefreshCw className="w-5 h-5 ml-2" />}
+                        </button>
+                        {stats && stats.attempts > 0 && (
+                          <button
+                            onClick={() => viewPastAttempt(stats.lastAttempt)}
+                            className="px-4 py-3 rounded-lg font-semibold bg-slate-200 hover:bg-slate-300 text-slate-700 transition-all"
+                            title="View last attempt"
+                          >
+                            <BookOpen className="w-5 h-5" />
+                          </button>
+                        )}
+                      </>
                     ) : (
                       <div className="px-6 py-3 rounded-lg font-semibold bg-slate-100 text-slate-400 flex items-center justify-center border border-slate-200 cursor-not-allowed">
                         Locked
@@ -421,6 +575,7 @@ export default function App() {
       if (userAnswers[idx] === q.correct_answer) correctCount++;
     });
     const scorePct = Math.round((correctCount / quizQuestions.length) * 100);
+    const stats = getDayStats(activeDayData.day);
 
     return (
       <div className="min-h-screen bg-slate-50 font-sans pb-12">
@@ -435,6 +590,24 @@ export default function App() {
             </span>
             <span className="text-xs text-slate-400 mt-1">{correctCount}/{quizQuestions.length} Correct</span>
           </div>
+
+          {/* Stats */}
+          {stats && (
+            <div className="mt-6 grid grid-cols-3 gap-4 max-w-xl mx-auto text-sm">
+              <div className="bg-slate-800 p-3 rounded-lg">
+                <p className="text-slate-400 text-xs">ATTEMPTS</p>
+                <p className="text-white font-bold text-lg">{stats.attempts}</p>
+              </div>
+              <div className="bg-slate-800 p-3 rounded-lg">
+                <p className="text-slate-400 text-xs">BEST SCORE</p>
+                <p className="text-green-400 font-bold text-lg">{stats.bestScore}%</p>
+              </div>
+              <div className="bg-slate-800 p-3 rounded-lg">
+                <p className="text-slate-400 text-xs">AVG SCORE</p>
+                <p className="text-blue-400 font-bold text-lg">{stats.avgScore}%</p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Detailed Review */}
@@ -471,6 +644,115 @@ export default function App() {
                           <span className="font-bold mr-3">{opt}.</span>
                           <span>{q.options[opt]}</span>
                           {opt === userAnswers[idx] && <span className="ml-auto text-xs opacity-70">(Your Answer)</span>}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Explanation & Reference */}
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg p-5">
+                    <h4 className="font-bold text-blue-900 mb-2 uppercase text-xs tracking-wider">Explanation</h4>
+                    <p className="text-slate-700 text-sm mb-4 leading-relaxed font-serif">
+                      {q.explanation}
+                    </p>
+                    <div className="border-t border-blue-200 pt-3 mt-3">
+                      <h4 className="font-bold text-blue-900 mb-1 uppercase text-xs tracking-wider">Schweser Reference</h4>
+                      <p className="text-blue-800 text-xs flex items-center">
+                        <BookOpen className="w-3 h-3 mr-1" />
+                        {q.schweser_reference}
+                      </p>
+                      <p className="text-blue-800 text-xs mt-1 flex items-center">
+                        <Target className="w-3 h-3 mr-1" />
+                        LOS: {q.LOS}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Footer Actions */}
+        <div className="max-w-4xl mx-auto mt-8 px-4 pb-12 flex justify-center gap-4">
+          <button
+            onClick={backToRoadmap}
+            className="bg-slate-900 hover:bg-slate-800 text-white font-bold py-4 px-8 rounded-xl shadow-lg flex items-center transition-transform hover:scale-105"
+          >
+            <Map className="w-5 h-5 mr-2" />
+            Trở về Roadmap
+          </button>
+          <button
+            onClick={handleRetake}
+            className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 px-8 rounded-xl shadow-lg flex items-center transition-transform hover:scale-105"
+          >
+            <RefreshCw className="w-5 h-5 mr-2" />
+            Làm Lại
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // SCREEN 6: PAST REVIEW (View previous attempt)
+  if (currentScreen === 'past-review' && selectedAttempt) {
+    const attempt = selectedAttempt;
+    let correctCount = 0;
+    attempt.questions.forEach((q, idx) => {
+      if (attempt.userAnswers[idx] === q.correct_answer) correctCount++;
+    });
+
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans pb-12">
+        {/* Header */}
+        <div className="bg-slate-900 text-white p-8 text-center shadow-md">
+          <h1 className="text-3xl font-bold mb-2">Past Attempt Review: Day {attempt.dayNumber}</h1>
+          <p className="text-slate-300 mb-2">{attempt.dayName}</p>
+          <p className="text-xs text-slate-400 mb-6">
+            {new Date(attempt.timestamp).toLocaleString('vi-VN')}
+          </p>
+
+          <div className="inline-flex flex-col items-center justify-center p-6 bg-slate-800 rounded-full border-4 border-slate-700 w-32 h-32">
+            <span className={`text-3xl font-bold ${attempt.scorePct >= 70 ? 'text-green-400' : attempt.scorePct >= 50 ? 'text-yellow-400' : 'text-red-400'}`}>
+              {attempt.scorePct}%
+            </span>
+            <span className="text-xs text-slate-400 mt-1">{attempt.correctCount}/{attempt.totalQuestions} Correct</span>
+          </div>
+        </div>
+
+        {/* Detailed Review */}
+        <div className="max-w-4xl mx-auto mt-8 px-4 space-y-8">
+          {attempt.questions.map((q, idx) => {
+            const isCorrect = attempt.userAnswers[idx] === q.correct_answer;
+            return (
+              <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                {/* Result Bar */}
+                <div className={`px-6 py-3 font-semibold text-sm flex items-center ${isCorrect ? 'bg-green-50 text-green-700 border-b border-green-100' : 'bg-red-50 text-red-700 border-b border-red-100'}`}>
+                  {isCorrect ? <CheckCircle className="w-5 h-5 mr-2" /> : <AlertCircle className="w-5 h-5 mr-2" />}
+                  Question {idx + 1} {isCorrect ? '- Correct' : '- Incorrect'}
+                </div>
+
+                <div className="p-6">
+                  {/* Question */}
+                  <div className="font-serif text-lg mb-6 text-slate-800 leading-relaxed">
+                    {q.question_text}
+                  </div>
+
+                  <div className="space-y-3 mb-8 text-sm">
+                    {['A', 'B', 'C'].map(opt => {
+                      let bgClass = "bg-slate-50 border-slate-200 text-slate-600";
+
+                      if (opt === q.correct_answer) {
+                        bgClass = "bg-green-100 border-green-400 text-green-900 font-medium";
+                      } else if (opt === attempt.userAnswers[idx] && !isCorrect) {
+                        bgClass = "bg-red-100 border-red-400 text-red-900";
+                      }
+
+                      return (
+                        <div key={opt} className={`p-4 rounded border flex items-start ${bgClass}`}>
+                          <span className="font-bold mr-3">{opt}.</span>
+                          <span>{q.options[opt]}</span>
+                          {opt === attempt.userAnswers[idx] && <span className="ml-auto text-xs opacity-70">(Your Answer)</span>}
                         </div>
                       )
                     })}
